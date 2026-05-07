@@ -51,6 +51,7 @@ Within a single session, you can skip Step 0 on follow-up `/watch` calls — onc
 ## When to use
 
 - User pastes a video URL (YouTube, Vimeo, X, TikTok, Twitch clip, most yt-dlp-supported sites) and asks about it.
+- User pastes a Google Drive URL — either a direct file (`drive.google.com/file/d/<ID>/view`) or a folder (`drive.google.com/drive/folders/<ID>`). For private files, the [`gws` CLI](https://github.com/googleworkspace/cli) must be installed and authenticated; for folders it's required (so we can list and pick). Public files fall back to `yt-dlp`.
 - User points at a local video file (`.mp4`, `.mov`, `.mkv`, `.webm`, etc.) and asks about it.
 - User types `/watch <url-or-path> [question]`.
 
@@ -141,6 +142,7 @@ All three keys live in `~/.config/watch/.env`. The script prefers Groq → OpenA
 - **No transcript available** → captions missing AND (no Whisper key OR Whisper API failed). Script prints a hint pointing to setup. Proceed frames-only and tell the user.
 - **Long video warning printed** → acknowledge it in your answer. Offer to re-run focused on a specific section via `--start`/`--end` rather than a sparse full-video scan.
 - **Download fails** → yt-dlp's error goes to stderr. If it's a login-required or region-locked video, tell the user plainly; do not keep retrying.
+- **Drive URL** → for `drive.google.com/file/d/<ID>` the script tries `gws` first (auth via the user's Google session), falling back to `yt-dlp` if `gws` isn't installed. For `drive.google.com/drive/folders/<ID>`, the script lists videos inside the folder, prompts the user to pick one (1-based index on stdin), and downloads the chosen file. If `gws` isn't installed, folder URLs fail with an actionable error pointing to https://github.com/googleworkspace/cli.
 - **Whisper request fails** → the error is printed to stderr (likely: invalid key, rate limit, or 25 MB upload limit on a very long video). The report will say "none available" for transcript. You can retry with `--whisper openai` if Groq failed (or vice versa).
 
 ## Token efficiency
@@ -156,6 +158,7 @@ If you already watched a video this session and the user asks a follow-up, do **
 
 **What this skill does:**
 - Runs `yt-dlp` locally to download the video and pull native captions when the source supports them (public data; the request goes directly to whatever host the URL points at)
+- For Google Drive URLs, optionally invokes the `gws` CLI (https://github.com/googleworkspace/cli) — when it's installed — to fetch file metadata and download the bytes via the authenticated Drive API. `gws` uses the user's existing Google session; this skill never sees a Google access token directly.
 - Runs `ffmpeg` / `ffprobe` locally to extract frames as JPEGs and, when Whisper is needed, a mono 16 kHz audio clip
 - Sends the extracted audio clip to Groq's Whisper API (`api.groq.com/openai/v1/audio/transcriptions`) when `GROQ_API_KEY` is set (preferred — cheaper, faster)
 - Sends the extracted audio clip to OpenAI's audio transcription API (`api.openai.com/v1/audio/transcriptions`) when `OPENAI_API_KEY` is set and Groq is not, or when `--whisper openai` is forced
@@ -170,6 +173,6 @@ If you already watched a video this session and the user asks a follow-up, do **
 - Does not log, cache, or write API keys to stdout, stderr, or output files
 - Does not persist anything outside the working directory and `~/.config/watch/.env` — clean up the working directory when you're done (Step 5)
 
-**Bundled scripts:** `scripts/watch.py` (entry point), `scripts/download.py` (yt-dlp wrapper), `scripts/frames.py` (ffmpeg frame extraction), `scripts/transcribe.py` (caption selection + Whisper orchestration), `scripts/whisper.py` (Groq / OpenAI clients), `scripts/setup.py` (preflight + installer)
+**Bundled scripts:** `scripts/watch.py` (entry point), `scripts/download.py` (yt-dlp wrapper + Drive routing), `scripts/gdrive.py` (gws CLI wrapper for Google Drive), `scripts/frames.py` (ffmpeg frame extraction), `scripts/transcribe.py` (caption selection + Whisper orchestration), `scripts/whisper.py` (Groq / OpenAI / OpenRouter clients), `scripts/setup.py` (preflight + installer)
 
 Review scripts before first use to verify behavior.

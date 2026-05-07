@@ -45,8 +45,8 @@ Claude is great at reading and synthesizing — but until now, video was the one
 
 ## How it works
 
-1. **You paste a video and a question.** URL (anything yt-dlp supports — YouTube, Loom, TikTok, X, Instagram, plus a few hundred more) or a local path (`.mp4`, `.mov`, `.mkv`, `.webm`).
-2. **`yt-dlp` downloads it.** For URLs, into a temp working directory. For local files, no download — just probed in place.
+1. **You paste a video and a question.** URL (anything yt-dlp supports — YouTube, Loom, TikTok, X, Instagram, plus a few hundred more), a Google Drive file or folder URL (with [`gws` CLI](https://github.com/googleworkspace/cli) installed for private files / folders), or a local path (`.mp4`, `.mov`, `.mkv`, `.webm`).
+2. **`yt-dlp` downloads it.** For URLs, into a temp working directory. For local files, no download — just probed in place. Drive URLs are routed through `gws` when available; folder URLs prompt you to pick which video to fetch.
 3. **`ffmpeg` extracts frames at an auto-scaled rate.** The frame budget is duration-aware: ≤30s gets ~30 frames, 30-60s gets ~40, 1-3min gets ~60, 3-10min gets ~80, longer gets 100 sparsely. Hard ceilings: 2 fps, 100 frames. JPEGs at 512px wide by default — bump with `--resolution 1024` if Claude needs to read on-screen text.
 4. **The transcript comes from one of two places.** First try: `yt-dlp` pulls native captions (manual or auto-generated) from the source. Free, instant, accurate-ish. Fallback: extract a mono 16 kHz audio clip and ship it to Whisper — Groq's `whisper-large-v3` (preferred — cheaper and faster), OpenAI's `whisper-1`, or OpenRouter's `openai/whisper-large-v3-turbo` (Groq under the hood; useful when you want one key for chat/ASR/vision).
 5. **Frames + transcript are handed to Claude.** The script prints frame paths with `t=MM:SS` markers and the transcript with timestamps. Claude `Read`s each frame in parallel — JPEGs render directly as images in its context.
@@ -123,6 +123,7 @@ Captions cover the majority of public videos for free. The Whisper fallback only
 | Capability | What you need | Cost |
 |------------|---------------|------|
 | Download + native captions | `yt-dlp` + `ffmpeg` | Free |
+| Google Drive (private / folders) | [`gws` CLI](https://github.com/googleworkspace/cli) authenticated with your Google account | Free |
 | Whisper fallback (preferred) | [Groq API key](https://console.groq.com/keys) — `whisper-large-v3` | Cheap, fast |
 | Whisper fallback (alt) | [OpenAI API key](https://platform.openai.com/api-keys) — `whisper-1` | Standard pricing |
 | Whisper fallback (unified) | [OpenRouter API key](https://openrouter.ai/keys) — `openai/whisper-large-v3-turbo` | Same as Groq ($0.04/hr); flat text only — no per-segment timestamps |
@@ -135,6 +136,8 @@ Captions cover the majority of public videos for free. The Whisper fallback only
 /watch https://www.tiktok.com/@user/video/123 summarize this
 /watch ~/Movies/screen-recording.mp4 when does the UI break?
 /watch https://vimeo.com/123 what tools does she mention?
+/watch https://drive.google.com/file/d/<FILE_ID>/view summarize the demo
+/watch https://drive.google.com/drive/folders/<FOLDER_ID>          # lists videos, prompts you to pick one
 ```
 
 Focused on a specific section — denser frame budget, lower token cost:
@@ -167,7 +170,8 @@ Other knobs (passed to `scripts/watch.py`):
 ├── SKILL.md                 # skill contract — loaded by all three surfaces
 ├── scripts/
 │   ├── watch.py             # entry point — orchestrates download → frames → transcript
-│   ├── download.py          # yt-dlp wrapper
+│   ├── download.py          # yt-dlp wrapper + Google Drive routing
+│   ├── gdrive.py            # gws CLI wrapper for Google Drive files/folders
 │   ├── frames.py            # ffmpeg frame extraction + auto-fps logic
 │   ├── transcribe.py        # VTT parsing + dedupe + Whisper orchestration
 │   ├── whisper.py           # Groq / OpenAI / OpenRouter clients (pure stdlib)
