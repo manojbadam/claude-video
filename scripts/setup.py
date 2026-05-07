@@ -35,17 +35,23 @@ ENV_TEMPLATE = """# /watch API configuration
 # Whisper transcription fallback — used only when yt-dlp cannot get captions
 # (or when you point /watch at a local file with no subtitles).
 #
-# Groq is preferred: it runs whisper-large-v3 at a fraction of OpenAI's price
-# and is faster in practice. OpenAI is the compatible fallback.
+# Preference order: Groq → OpenAI → OpenRouter. Groq is preferred — it runs
+# whisper-large-v3 at a fraction of OpenAI's price and is faster in practice.
+# OpenAI is the compatible fallback. OpenRouter brokers
+# openai/whisper-large-v3-turbo (Groq under the hood) and is useful when you
+# already have an OpenRouter key for chat/vision and want one bill for all of
+# it; cost matches direct Groq.
 #
-# Get a Groq key:  https://console.groq.com/keys
-# Get an OpenAI key:  https://platform.openai.com/api-keys
+# Get a Groq key:        https://console.groq.com/keys
+# Get an OpenAI key:     https://platform.openai.com/api-keys
+# Get an OpenRouter key: https://openrouter.ai/keys
 #
-# Leave both blank to disable Whisper — /watch will still work, but videos
+# Leave all blank to disable Whisper — /watch will still work, but videos
 # without native captions will come back frames-only.
 
 GROQ_API_KEY=
 OPENAI_API_KEY=
+OPENROUTER_API_KEY=
 """
 
 
@@ -100,6 +106,8 @@ def _have_api_key() -> tuple[bool, str | None]:
         return True, "groq"
     if _read_env_key("OPENAI_API_KEY"):
         return True, "openai"
+    if _read_env_key("OPENROUTER_API_KEY"):
+        return True, "openrouter"
     return False, None
 
 
@@ -238,7 +246,7 @@ def cmd_check() -> int:
     if s["missing_binaries"]:
         parts.append(f"missing binaries: {', '.join(s['missing_binaries'])}")
     if not s["has_api_key"]:
-        parts.append("no Whisper API key (GROQ_API_KEY or OPENAI_API_KEY)")
+        parts.append("no Whisper API key (GROQ_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY)")
     installer = Path(__file__).resolve()
     sys.stderr.write(
         f"[watch] setup incomplete ({'; '.join(parts)}). "
@@ -304,9 +312,10 @@ def cmd_install() -> int:
     print("")
     print("[setup] one step left: add a Whisper API key.")
     print("")
-    print(f"  Edit {CONFIG_FILE} and set either:")
-    print("    GROQ_API_KEY=...    (preferred — cheaper, faster; get one at console.groq.com/keys)")
-    print("    OPENAI_API_KEY=...  (fallback; get one at platform.openai.com/api-keys)")
+    print(f"  Edit {CONFIG_FILE} and set one of:")
+    print("    GROQ_API_KEY=...        (preferred — cheaper, faster; get one at console.groq.com/keys)")
+    print("    OPENAI_API_KEY=...      (fallback; get one at platform.openai.com/api-keys)")
+    print("    OPENROUTER_API_KEY=...  (one key for chat/ASR/vision; get one at openrouter.ai/keys)")
     print("")
     print("  Without a key, /watch still works but videos without captions come back frames-only.")
     return 3

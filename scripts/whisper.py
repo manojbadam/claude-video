@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transcribe a video via Groq or OpenAI Whisper API.
+"""Transcribe a video via Groq, OpenAI, or OpenRouter Whisper API.
 
 Strategy: extract audio (mono 16kHz mp3, tiny payload), upload to whichever
 API has a key. Returns segments in the same shape as transcribe.parse_vtt so
@@ -10,6 +10,7 @@ Pure stdlib — no `pip install groq` or `pip install openai` needed.
 """
 from __future__ import annotations
 
+import base64
 import io
 import json
 import mimetypes
@@ -31,11 +32,15 @@ GROQ_MODEL = "whisper-large-v3"
 OPENAI_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
 OPENAI_MODEL = "whisper-1"
 
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/audio/transcriptions"
+OPENROUTER_MODEL = "openai/whisper-large-v3-turbo"
+
 
 def load_api_key(preferred: str | None = None) -> tuple[str, str] | tuple[None, None]:
-    """Return (backend, api_key). Prefers Groq, falls back to OpenAI.
+    """Return (backend, api_key). Prefers Groq, then OpenAI, then OpenRouter.
 
-    If `preferred` is "groq" or "openai", only that backend's key is considered.
+    If `preferred` is "groq", "openai", or "openrouter", only that backend's
+    key is considered.
     """
     def _from_env(name: str) -> str | None:
         value = os.environ.get(name)
@@ -65,7 +70,11 @@ def load_api_key(preferred: str | None = None) -> tuple[str, str] | tuple[None, 
         Path.cwd() / ".env",
     ]
 
-    candidates = (("GROQ_API_KEY", "groq"), ("OPENAI_API_KEY", "openai"))
+    candidates = (
+        ("GROQ_API_KEY", "groq"),
+        ("OPENAI_API_KEY", "openai"),
+        ("OPENROUTER_API_KEY", "openrouter"),
+    )
     if preferred is not None:
         candidates = tuple(c for c in candidates if c[1] == preferred)
 
@@ -145,20 +154,62 @@ MAX_429_RETRIES = 2
 RETRY_BASE_DELAY = 2.0
 
 
-def _post_whisper(endpoint: str, api_key: str, model: str, audio_path: Path) -> dict:
+def _post_whisper_multipart(endpoint: str, api_key: str, model: str, audio_path: Path) -> dict:
+    """OpenAI-compatible whisper call (Groq, OpenAI). Sends multipart/form-data."""
     fields = {
         "model": model,
         "response_format": "verbose_json",
         "temperature": "0",
     }
     body, boundary = _build_multipart(fields, audio_path)
+    return _send(
+        endpoint,
+        body,
+        {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+
+
+def _post_whisper_openrouter(endpoint: str, api_key: str, model: str, audio_path: Path) -> dict:
+    """OpenRouter speech-to-text — JSON body with base64 audio.
+
+    OpenRouter does NOT proxy OpenAI's multipart `/audio/transcriptions` shape;
+    it expects {model, input_audio: {data: <base64>, format: <ext>}} as JSON.
+    """
+    audio_format = (audio_path.suffix.lstrip(".") or "mp3").lower()
+    if audio_format == "m4a":
+        audio_format = "mp4"
+    payload = {
+        "model": model,
+        "input_audio": {
+            "data": base64.b64encode(audio_path.read_bytes()).decode("ascii"),
+            "format": audio_format,
+        },
+    }
+    body = json.dumps(payload).encode("utf-8")
+    return _send(
+        endpoint,
+        body,
+        {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            # OpenRouter recommends these for attribution; ignored elsewhere.
+            "HTTP-Referer": "https://github.com/bradautomates/claude-video",
+            "X-Title": "claude-video /watch",
+        },
+    )
+
+
+def _send(endpoint: str, body: bytes, extra_headers: dict[str, str]) -> dict:
+    """Shared HTTP retry loop used by all backends."""
     headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": f"multipart/form-data; boundary={boundary}",
         # Groq sits behind Cloudflare — the default `Python-urllib/3.x` UA
         # trips WAF rule 1010 (403) before auth even runs. Any non-default
         # UA clears it; we identify honestly.
         "User-Agent": "watch-skill/1.0 (+claude-code; python-urllib)",
+        **extra_headers,
     }
 
     context = ssl.create_default_context()
@@ -279,8 +330,9 @@ def transcribe_video(
     if not backend or not api_key:
         setup_py = Path(__file__).resolve().parent / "setup.py"
         raise SystemExit(
-            "No Whisper API key available. Set GROQ_API_KEY (preferred) or OPENAI_API_KEY "
-            "in the environment or in ~/.config/watch/.env. "
+            "No Whisper API key available. Set GROQ_API_KEY (preferred), "
+            "OPENAI_API_KEY, or OPENROUTER_API_KEY in the environment or in "
+            "~/.config/watch/.env. "
             f"Run `python3 {setup_py}` to configure."
         )
 
@@ -290,9 +342,11 @@ def transcribe_video(
     print(f"[watch] audio: {size_kb:.0f} kB — uploading to {backend} Whisper…", file=sys.stderr)
 
     if backend == "groq":
-        response = _post_whisper(GROQ_ENDPOINT, api_key, GROQ_MODEL, audio_path)
+        response = _post_whisper_multipart(GROQ_ENDPOINT, api_key, GROQ_MODEL, audio_path)
     elif backend == "openai":
-        response = _post_whisper(OPENAI_ENDPOINT, api_key, OPENAI_MODEL, audio_path)
+        response = _post_whisper_multipart(OPENAI_ENDPOINT, api_key, OPENAI_MODEL, audio_path)
+    elif backend == "openrouter":
+        response = _post_whisper_openrouter(OPENROUTER_ENDPOINT, api_key, OPENROUTER_MODEL, audio_path)
     else:
         raise SystemExit(f"Unknown whisper backend: {backend}")
 
@@ -306,7 +360,7 @@ def transcribe_video(
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("usage: whisper.py <video-path> [<audio-out.mp3>] [--backend groq|openai]", file=sys.stderr)
+        print("usage: whisper.py <video-path> [<audio-out.mp3>] [--backend groq|openai|openrouter]", file=sys.stderr)
         raise SystemExit(2)
 
     video = sys.argv[1]
