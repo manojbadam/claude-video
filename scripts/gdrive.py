@@ -56,13 +56,22 @@ def have_gws() -> bool:
     return shutil.which("gws") is not None
 
 
-def _run_gws(args: list[str], capture: bool = True) -> subprocess.CompletedProcess:
-    """Invoke `gws` and surface stderr verbatim on failure."""
+def _run_gws(
+    args: list[str],
+    capture: bool = True,
+    cwd: Path | str | None = None,
+) -> subprocess.CompletedProcess:
+    """Invoke `gws` and surface stderr verbatim on failure.
+
+    `cwd` is required for `--output` paths under gws >= 0.22, which rejects
+    output paths that resolve outside the current working directory.
+    """
     return subprocess.run(
         ["gws", *args],
         stdout=subprocess.PIPE if capture else None,
         stderr=subprocess.PIPE,
         text=True,
+        cwd=str(cwd) if cwd else None,
     )
 
 
@@ -93,13 +102,17 @@ def download_file(file_id: str, out_path: Path) -> Path:
         "supportsAllDrives": True,
     })
     print(f"[watch] downloading via gws → {out_path.name}…", file=sys.stderr)
+    # gws >= 0.22 rejects --output paths outside the CWD as a security
+    # validation. Run the subprocess inside the target directory and pass
+    # only the file name.
     proc = _run_gws(
         [
             "drive", "files", "get",
             "--params", params,
-            "--output", str(out_path),
+            "--output", out_path.name,
         ],
         capture=True,
+        cwd=out_path.parent,
     )
     if proc.returncode != 0:
         raise SystemExit(
