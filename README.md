@@ -69,6 +69,46 @@ When the user names a moment ("around 2:30", "the last 30 seconds", "from 0:45 t
 
 ## Install
 
+> **This is a fork** ([`manojbadam/claude-video`](https://github.com/manojbadam/claude-video)). It tracks upstream and adds:
+> - **OpenRouter** as a third Whisper backend (one key for chat / ASR / vision).
+> - **Native Google Drive support** via the [`gws` CLI](https://github.com/googleworkspace/cli) — paste a Drive file URL or folder URL and `/watch` will download it through your authenticated Google session. Folders prompt you to pick a video.
+> - **Sidecar transcript discovery** — if a `.vtt` or `.srt` file lives next to a local video or in the same Drive folder, `/watch` uses it directly and skips the Whisper API call entirely.
+>
+> If you want the upstream version, swap `manojbadam` for `bradautomates` in any command below.
+
+### Install this fork
+
+| Surface | Install |
+|---------|---------|
+| **Claude Code** | `/plugin marketplace add manojbadam/claude-video` then `/plugin install watch@claude-video` |
+| **Codex** | `git clone https://github.com/manojbadam/claude-video.git ~/.codex/skills/watch` |
+| **Manual / dev** | `git clone https://github.com/manojbadam/claude-video.git ~/.claude/skills/watch` |
+
+#### Claude Code
+
+```
+/plugin marketplace add manojbadam/claude-video
+/plugin install watch@claude-video
+```
+
+Update later with `/plugin update watch@claude-video`.
+
+#### Codex
+
+```bash
+git clone https://github.com/manojbadam/claude-video.git ~/.codex/skills/watch
+```
+
+#### Manual (developer)
+
+```bash
+git clone https://github.com/manojbadam/claude-video.git ~/.claude/skills/watch
+```
+
+> **Note:** the `.skill` bundle for claude.ai web is not currently published from this fork — its release pipeline is upstream-only. Use the Claude Code or manual install paths above. If you specifically need the web bundle, install upstream below.
+
+### Install upstream (`bradautomates/claude-video`)
+
 | Surface | Install |
 |---------|---------|
 | **Claude Code** | `/plugin marketplace add bradautomates/claude-video` then `/plugin install watch@claude-video` |
@@ -76,34 +116,7 @@ When the user names a moment ("around 2:30", "the last 30 seconds", "from 0:45 t
 | **Codex** | `git clone https://github.com/bradautomates/claude-video.git ~/.codex/skills/watch` |
 | **Manual / dev** | `git clone https://github.com/bradautomates/claude-video.git ~/.claude/skills/watch` |
 
-### Claude Code
-
-```
-/plugin marketplace add bradautomates/claude-video
-/plugin install watch@claude-video
-```
-
-Update later with `/plugin update watch@claude-video`.
-
-### claude.ai (web)
-
-1. [Download `watch.skill`](https://github.com/bradautomates/claude-video/releases/latest) from the latest release.
-2. Go to Settings → Capabilities → Skills.
-3. Click `+` and drop the file in.
-
-Enable "Code execution and file creation" under Capabilities first — the skill shells out to `ffmpeg` and `yt-dlp`, so it won't run without it.
-
-### Codex
-
-```bash
-git clone https://github.com/bradautomates/claude-video.git ~/.codex/skills/watch
-```
-
-### Manual (developer)
-
-```bash
-git clone https://github.com/bradautomates/claude-video.git ~/.claude/skills/watch
-```
+For the upstream **claude.ai (web)** install, after dropping `watch.skill` into Settings → Capabilities → Skills, also enable "Code execution and file creation" under Capabilities — the skill shells out to `ffmpeg` and `yt-dlp` and won't run without it.
 
 ## First run
 

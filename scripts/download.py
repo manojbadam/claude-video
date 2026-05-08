@@ -20,6 +20,7 @@ import gdrive
 
 
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".flv", ".wmv"}
+SUBTITLE_EXTS = {".vtt", ".srt"}
 
 
 def is_url(source: str) -> bool:
@@ -27,7 +28,57 @@ def is_url(source: str) -> bool:
     return parsed.scheme in ("http", "https")
 
 
-def resolve_local(path: str) -> dict:
+def _srt_to_vtt(srt_text: str) -> str:
+    """Minimal SRT→VTT conversion: prepend WEBVTT header, swap `,` for `.` in cue timings."""
+    lines = srt_text.splitlines()
+    out: list[str] = ["WEBVTT", ""]
+    for line in lines:
+        if "-->" in line:
+            out.append(line.replace(",", "."))
+        else:
+            out.append(line)
+    return "\n".join(out) + "\n"
+
+
+def _materialize_sidecar(src: Path, work_dir: Path) -> Path:
+    """Return a VTT file path. If src is already VTT, return it unchanged.
+    If src is SRT, write a converted copy into work_dir and return that."""
+    if src.suffix.lower() == ".vtt":
+        return src
+    work_dir.mkdir(parents=True, exist_ok=True)
+    out = work_dir / "sidecar.vtt"
+    out.write_text(_srt_to_vtt(src.read_text(encoding="utf-8", errors="replace")))
+    return out
+
+
+def _find_local_sidecar(video_path: Path) -> Path | None:
+    """Look for a transcript file next to a video.
+
+    Match rules (in order):
+      1. Single .vtt/.srt file in the same folder — use it.
+      2. Same-stem match (video.mp4 ↔ video.vtt) — use it.
+
+    Single-file is preferred so patterns like Zoom's `<name>.mp4` +
+    `<name>.transcript.vtt` (different stems) get caught for free.
+    """
+    folder = video_path.parent
+    candidates = [
+        p for p in folder.iterdir()
+        if p.is_file() and p.suffix.lower() in SUBTITLE_EXTS
+    ]
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    # Multiple — fall back to strict same-stem match.
+    stem = video_path.stem
+    for c in candidates:
+        if c.stem == stem:
+            return c
+    return None
+
+
+def resolve_local(path: str, work_dir: Path | None = None) -> dict:
     p = Path(path).expanduser().resolve()
     if not p.exists():
         raise SystemExit(f"File not found: {p}")
@@ -36,9 +87,19 @@ def resolve_local(path: str) -> dict:
             f"[watch] warning: {p.suffix} is not a known video extension, proceeding anyway",
             file=sys.stderr,
         )
+
+    subtitle_path: str | None = None
+    sidecar = _find_local_sidecar(p)
+    if sidecar is not None:
+        if work_dir is None:
+            work_dir = p.parent
+        materialized = _materialize_sidecar(sidecar, work_dir)
+        subtitle_path = str(materialized)
+        print(f"[watch] using sidecar transcript: {sidecar.name}", file=sys.stderr)
+
     return {
         "video_path": str(p),
-        "subtitle_path": None,
+        "subtitle_path": subtitle_path,
         "info": {"title": p.name, "url": str(p)},
         "downloaded": False,
     }
@@ -79,7 +140,43 @@ def _ext_for_mime(mime: str | None, fallback_name: str) -> str:
     return ".mp4"
 
 
-def _gdrive_download_one(file_id: str, out_dir: Path, source_url: str) -> dict:
+def _pick_drive_sidecar(subs: list[dict], video_name: str) -> dict | None:
+    """Same match rules as _find_local_sidecar: single-file first, then same-stem."""
+    if not subs:
+        return None
+    if len(subs) == 1:
+        return subs[0]
+    stem = Path(video_name).stem
+    for s in subs:
+        if Path(s.get("name") or "").stem == stem:
+            return s
+    return None
+
+
+def _download_drive_sidecar(parent_id: str | None, video_name: str, out_dir: Path) -> Path | None:
+    """If a transcript file lives next to the video on Drive, download + materialize it.
+    Returns a VTT path or None."""
+    if not parent_id:
+        return None
+    subs = gdrive.list_folder_subtitles(parent_id)
+    chosen = _pick_drive_sidecar(subs, video_name)
+    if chosen is None:
+        return None
+
+    sidecar_name = chosen.get("name") or "sidecar"
+    suffix = Path(sidecar_name).suffix.lower() or ".vtt"
+    raw_path = out_dir / f"sidecar{suffix}"
+    print(f"[watch] using sidecar transcript: {sidecar_name}", file=sys.stderr)
+    gdrive.download_file(chosen["id"], raw_path)
+    return _materialize_sidecar(raw_path, out_dir)
+
+
+def _gdrive_download_one(
+    file_id: str,
+    out_dir: Path,
+    source_url: str,
+    parent_id: str | None = None,
+) -> dict:
     """Download a single Drive file via gws and shape the result like yt-dlp."""
     meta = gdrive.get_file_metadata(file_id)
     name = meta.get("name") or file_id
@@ -93,9 +190,13 @@ def _gdrive_download_one(file_id: str, out_dir: Path, source_url: str) -> dict:
     out_path = out_dir / f"video{_ext_for_mime(mime, name)}"
     gdrive.download_file(file_id, out_path)
 
+    if parent_id is None:
+        parent_id = gdrive.get_file_parent(file_id)
+    sidecar_path = _download_drive_sidecar(parent_id, name, out_dir)
+
     return {
         "video_path": str(out_path),
-        "subtitle_path": None,  # Drive files don't carry sidecar VTTs
+        "subtitle_path": str(sidecar_path) if sidecar_path else None,
         "info": {"title": name, "url": source_url},
         "downloaded": True,
     }
@@ -128,7 +229,9 @@ def _download_gdrive(url: str, classification: dict, out_dir: Path) -> dict | No
         videos = gdrive.list_folder_videos(classification["id"])
         chosen = gdrive.prompt_pick_video(videos)
         chosen_url = f"https://drive.google.com/file/d/{chosen['id']}/view"
-        return _gdrive_download_one(chosen["id"], out_dir, chosen_url)
+        return _gdrive_download_one(
+            chosen["id"], out_dir, chosen_url, parent_id=classification["id"]
+        )
 
     return None
 
@@ -199,7 +302,7 @@ def download_url(url: str, out_dir: Path) -> dict:
 def download(source: str, out_dir: Path) -> dict:
     if is_url(source):
         return download_url(source, out_dir)
-    return resolve_local(source)
+    return resolve_local(source, work_dir=out_dir)
 
 
 if __name__ == "__main__":

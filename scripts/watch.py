@@ -16,6 +16,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from download import download, is_url  # noqa: E402
+import gdrive  # noqa: E402
 from frames import MAX_FPS, auto_fps, auto_fps_focus, extract, format_time, get_metadata, parse_time  # noqa: E402
 from transcribe import filter_range, format_transcript, parse_vtt  # noqa: E402
 from whisper import load_api_key, transcribe_video  # noqa: E402
@@ -55,10 +56,13 @@ def main() -> int:
     work.mkdir(parents=True, exist_ok=True)
     print(f"[watch] working dir: {work}", file=sys.stderr)
 
-    print(
-        "[watch] downloading via yt-dlp…" if is_url(args.source) else "[watch] using local file…",
-        file=sys.stderr,
-    )
+    if not is_url(args.source):
+        source_kind = "[watch] using local file…"
+    elif gdrive.classify(args.source) is not None:
+        source_kind = "[watch] resolving Google Drive source…"
+    else:
+        source_kind = "[watch] downloading via yt-dlp…"
+    print(source_kind, file=sys.stderr)
     dl = download(args.source, work / "download")
     video_path = dl["video_path"]
 

@@ -126,7 +126,9 @@ If the user asked a specific question, answer it directly citing timestamps. If 
 
 ## Transcription
 
-The script gets a timestamped transcript in one of two ways:
+The script gets a timestamped transcript in one of three ways:
+
+0. **Sidecar transcript file (free, fastest).** Before any download or API call, when the source is a local file or a Drive file/folder, the script looks in the surrounding folder for a `.vtt` or `.srt` next to the video. Match rules: if there's a single subtitle file in the folder, use it (covers the common Zoom case where the video is `<name>_1920x1080.mp4` and the transcript is `<name>.transcript.vtt`); otherwise prefer a same-stem match. SRT files are converted to VTT inline. Stderr prints `[watch] using sidecar transcript: <name>` when a hit happens. Falls through to step 1 if nothing is found.
 
 1. **Native captions (free, preferred).** yt-dlp pulls manual or auto-generated subtitles from the source platform if available.
 2. **Whisper API fallback.** If no captions came back (or the source is a local file), the script extracts audio (`ffmpeg -vn -ac 1 -ar 16000 -b:a 64k`, ~0.5 MB/min) and uploads it to whichever Whisper API has a key configured:

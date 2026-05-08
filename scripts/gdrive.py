@@ -110,11 +110,11 @@ def download_file(file_id: str, out_path: Path) -> Path:
     return out_path
 
 
-def list_folder_videos(folder_id: str) -> list[dict]:
-    """Return video files in a Drive folder. Raises SystemExit on gws failure."""
+def _list_folder(folder_id: str) -> list[dict]:
+    """Return ALL non-trashed children of a Drive folder."""
     params = json.dumps({
         "q": f"'{folder_id}' in parents and trashed=false",
-        "fields": "files(id,name,mimeType,size)",
+        "fields": "files(id,name,mimeType,size,parents)",
         "supportsAllDrives": True,
         "includeItemsFromAllDrives": True,
         "pageSize": 1000,
@@ -129,9 +129,44 @@ def list_folder_videos(folder_id: str) -> list[dict]:
         data = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
         raise SystemExit(f"gws returned non-JSON folder listing: {exc}: {proc.stdout[:200]}")
+    return data.get("files") or []
 
-    files = data.get("files") or []
-    return [f for f in files if (f.get("mimeType") or "").startswith("video/")]
+
+def list_folder_videos(folder_id: str) -> list[dict]:
+    """Return video files in a Drive folder."""
+    return [f for f in _list_folder(folder_id) if (f.get("mimeType") or "").startswith("video/")]
+
+
+def list_folder_subtitles(folder_id: str) -> list[dict]:
+    """Return likely subtitle files (.vtt / .srt by name or mimeType) in a Drive folder."""
+    out: list[dict] = []
+    for f in _list_folder(folder_id):
+        name = (f.get("name") or "").lower()
+        mime = (f.get("mimeType") or "").lower()
+        if name.endswith(".vtt") or name.endswith(".srt"):
+            out.append(f)
+            continue
+        if mime in ("text/vtt", "application/x-subrip"):
+            out.append(f)
+    return out
+
+
+def get_file_parent(file_id: str) -> str | None:
+    """Return the first parent folder ID of a Drive file, or None if unknown."""
+    params = json.dumps({
+        "fileId": file_id,
+        "fields": "parents",
+        "supportsAllDrives": True,
+    })
+    proc = _run_gws(["drive", "files", "get", "--params", params])
+    if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    parents = data.get("parents") or []
+    return parents[0] if parents else None
 
 
 def _format_size(size_bytes: str | int | None) -> str:
