@@ -24,8 +24,10 @@ SUBTITLE_EXTS = {".vtt", ".srt"}
 
 
 def is_url(source: str) -> bool:
+    if source.startswith("-"):
+        return False
     parsed = urlparse(source)
-    return parsed.scheme in ("http", "https")
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
 def _srt_to_vtt(srt_text: str) -> str:
@@ -264,6 +266,7 @@ def download_url(url: str, out_dir: Path) -> dict:
         "--no-playlist",
         "--ignore-errors",
         "-o", output_template,
+        "--",
         url,
     ]
 
@@ -281,14 +284,15 @@ def download_url(url: str, out_dir: Path) -> dict:
     info: dict = {}
     if info_path.exists():
         try:
-            raw = json.loads(info_path.read_text())
+            raw = json.loads(info_path.read_text(encoding="utf-8"))
             info = {
                 "title": raw.get("title"),
                 "uploader": raw.get("uploader") or raw.get("channel"),
                 "duration": raw.get("duration"),
                 "url": raw.get("webpage_url") or url,
             }
-        except Exception:
+        except Exception as exc:
+            print(f"[watch] info.json parse failed: {exc}", file=sys.stderr)
             info = {"url": url}
 
     return {
